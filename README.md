@@ -53,16 +53,25 @@ React Frontend Dashboard
 POST `/api/ppg`
 
 Input:
+```json
 {
-“signal”: [52345, 52340, 52360, …]
+  "signal": [52345, 52340, 52360, 52370, 52395],
+  "sampling_rate": 100,
+  "user_id": "default-user",
+  "session_type": "resting",
+  "activity_load": 15,
+  "stress_level": 25
 }
+```
 Output:
+```json
 {
-“heart_rate”: 72,
-“rmssd”: 0.52,
-“cardiac_score”: 1,
-“signal_length”: 500
+  "heart_rate": 72,
+  "rmssd": 0.52,
+  "cardiac_score": 55,
+  "signal_length": 500
 }
+```
 ---
 
 ### Get History
@@ -70,6 +79,14 @@ Output:
 GET `/api/history`
 
 Returns previous cardiac measurements stored in MongoDB.
+
+### Hardware Payload Fixture
+
+A sample ESP32 request body is available at:
+
+`backend/tests/fixtures/esp32_payload.json`
+
+You can use that as the reference payload shape for tomorrow's hardware integration.
 
 ---
 

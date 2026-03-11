@@ -6,15 +6,30 @@ from app.models.cardiac_model import cardiac_score
 import numpy as np
 
 
-def analyze_ppg(signal):
+def analyze_ppg(signal, fs=100, baseline=None):
+
+    signal = np.array(signal, dtype=float)
+
+    if signal.size == 0:
+        return {"error": "No signal received"}
+
+    # remove DC offset
+    signal = signal - np.mean(signal)
 
     normalized = normalize_signal(signal)
 
-    filtered = bandpass_filter(normalized)
+    filtered = np.array(bandpass_filter(normalized, fs=fs), dtype=float)
 
-    filtered = np.clip(filtered, -3, 3)   # NEW LINE
+    # Basic Signal Quality Index (SQI)
+    signal_amplitude = np.max(filtered) - np.min(filtered)
 
-    peaks = detect_peaks(filtered)
+    if signal_amplitude < 0.02:
+        return {
+            "error": "Poor signal quality",
+            "signal_quality": "bad"
+        }
+
+    peaks = detect_peaks(filtered, fs=fs)
 
     if len(peaks) < 3:
         return {
@@ -22,7 +37,7 @@ def analyze_ppg(signal):
             "peaks_detected": len(peaks)
         }
 
-    rr = compute_rr_intervals(peaks)
+    rr = compute_rr_intervals(peaks, fs=fs)
 
     if len(rr) == 0:
         return {
@@ -38,11 +53,22 @@ def analyze_ppg(signal):
             "error": "Invalid HRV calculation"
         }
 
-    score = cardiac_score(hr, rmssd)
+    baseline = baseline or {}
+    score = cardiac_score(
+        hr,
+        rmssd,
+        baseline_hr=baseline.get("baseline_hr"),
+        baseline_rmssd=baseline.get("baseline_rmssd"),
+    )
 
     return {
-        "heart_rate": round(hr,2),
-        "rmssd": round(rmssd,3),
+        "heart_rate": round(hr, 2),
+        "rmssd": round(rmssd, 3),
         "cardiac_score": score,
-        "peaks": peaks
+        "peaks": peaks,
+        "signal_quality": "good",
+        "baseline_hr": baseline.get("baseline_hr"),
+        "baseline_rmssd": baseline.get("baseline_rmssd"),
+        "hr_delta_from_baseline": None if baseline.get("baseline_hr") is None else round(hr - baseline.get("baseline_hr"), 2),
+        "rmssd_delta_from_baseline": None if baseline.get("baseline_rmssd") is None else round(rmssd - baseline.get("baseline_rmssd"), 3),
     }

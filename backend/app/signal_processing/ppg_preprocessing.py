@@ -5,6 +5,10 @@ def normalize_signal(signal):
     signal = np.array(signal)
     signal = signal - np.mean(signal)
 
-    signal = (signal - np.mean(signal)) / np.std(signal)
+    std = np.std(signal)
+    if std == 0:
+        return signal.tolist()
+
+    signal = signal / std
 
     return signal.tolist()
