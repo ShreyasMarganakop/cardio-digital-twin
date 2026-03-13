@@ -19,6 +19,55 @@ collection = db["ppg_measurements"]
 ist = pytz.timezone("Asia/Kolkata")
 
 
+def _serialize_history_item(item):
+    return {
+        "timestamp": item["timestamp"],
+        "heart_rate": item["heart_rate"],
+        "rmssd": item["rmssd"],
+        "cardiac_score": item["cardiac_score"],
+        "signal_length": item.get("signal_length", 0),
+        "session_type": item.get("session_type", "resting"),
+        "activity_load": item.get("activity_load", 0),
+    }
+
+
+def _bucket_history(items, bucket: str):
+    buckets: dict[tuple, list] = {}
+
+    for item in items:
+        timestamp = item["timestamp"]
+
+        if bucket == "day":
+            bucket_key = (timestamp.year, timestamp.month, timestamp.day)
+            bucket_timestamp = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            iso_year, iso_week, _ = timestamp.isocalendar()
+            bucket_key = (iso_year, iso_week)
+            bucket_timestamp = (timestamp - timedelta(days=timestamp.weekday())).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+
+        buckets.setdefault((bucket_key, bucket_timestamp), []).append(item)
+
+    summarized = []
+    for (_, bucket_timestamp), bucket_items in sorted(buckets.items(), key=lambda item: item[0][1]):
+        summarized.append({
+            "timestamp": bucket_timestamp,
+            "heart_rate": round(sum(entry.get("heart_rate", 0) for entry in bucket_items) / len(bucket_items), 2),
+            "rmssd": round(sum(entry.get("rmssd", 0) for entry in bucket_items) / len(bucket_items), 3),
+            "cardiac_score": round(
+                sum(entry.get("cardiac_score", 0) for entry in bucket_items) / len(bucket_items), 2
+            ),
+            "signal_length": max(entry.get("signal_length", 0) for entry in bucket_items),
+            "session_type": bucket_items[-1].get("session_type", "resting"),
+            "activity_load": round(
+                sum(entry.get("activity_load", 0) for entry in bucket_items) / len(bucket_items)
+            ),
+        })
+
+    return summarized
+
+
 # -----------------------------
 # Receive PPG Signal
 # -----------------------------
@@ -80,7 +129,8 @@ def receive_ppg(data: PPGSignal):
         "rmssd_delta_from_baseline": result.get("rmssd_delta_from_baseline"),
         "sampling_rate": sampling_rate,
         "signal_length": len(signal),
-        "signal": signal
+        "signal": signal,
+        "processed_signal": result.get("processed_signal", []),
     }
 
     collection.insert_one(document)
@@ -103,16 +153,7 @@ def get_history(user_id: str = "default-user", session_type: str | None = None):
         query["session_type"] = session_type
 
     for item in collection.find(query, {"_id": 0}).sort("timestamp", -1).limit(20):
-
-        data.append({
-            "timestamp": item["timestamp"],
-            "heart_rate": item["heart_rate"],
-            "rmssd": item["rmssd"],
-            "cardiac_score": item["cardiac_score"],
-            "signal_length": item["signal_length"],
-            "session_type": item.get("session_type", "resting"),
-            "activity_load": item.get("activity_load", 0),
-        })
+        data.append(_serialize_history_item(item))
 
     return data
 
@@ -157,18 +198,19 @@ def history_range(range: str, user_id: str = "default-user", session_type: str |
     else:
         return {"error": "invalid range"}
 
-    data = []
-
     query = {"timestamp": {"$gte": start}, "user_id": user_id}
     if session_type:
         query["session_type"] = session_type
 
-    cursor = collection.find(query, {"_id": 0}).sort("timestamp", 1)
+    items = list(collection.find(query, {"_id": 0}).sort("timestamp", 1))
 
-    for item in cursor:
-        data.append(item)
+    if range == "daily":
+        return [_serialize_history_item(item) for item in items]
 
-    return data
+    if range == "weekly":
+        return _bucket_history(items, "day")
+
+    return _bucket_history(items, "week")
 
 
 @router.post("/simulate")
