@@ -2,6 +2,14 @@ def clamp(value, lower, upper):
     return max(lower, min(upper, value))
 
 
+def describe_band(value, low_cutoff=35, high_cutoff=65, low_label="low", mid_label="moderate", high_label="high"):
+    if value <= low_cutoff:
+        return low_label
+    if value >= high_cutoff:
+        return high_label
+    return mid_label
+
+
 def simulate_strategy(latest_measurement, recent_measurements, strategy, activity_load=50, stress_level=50, baseline=None):
     if not latest_measurement:
         return {"error": "No data available for simulation"}
@@ -53,6 +61,9 @@ def simulate_strategy(latest_measurement, recent_measurements, strategy, activit
     score_change = round(predicted_score - current_score, 2)
 
     explanation = []
+    load_band = describe_band(activity_load)
+    stress_band = describe_band(stress_level)
+
     if rmssd < baseline_rmssd - 10:
         explanation.append("RMSSD is well below your recent baseline, which suggests incomplete recovery.")
     elif rmssd < baseline_rmssd:
@@ -67,18 +78,63 @@ def simulate_strategy(latest_measurement, recent_measurements, strategy, activit
     else:
         explanation.append("Heart rate is close to or below your recent baseline, which lowers immediate cardiac strain.")
 
+    if activity_load >= 70:
+        explanation.append("Recent activity load is high, so your system is already carrying substantial training strain.")
+    elif activity_load <= 30:
+        explanation.append("Recent activity load is light, so you have more room for progression if recovery markers agree.")
+    else:
+        explanation.append("Recent activity load is moderate, so the recommendation balances adaptation and recovery.")
+
+    if stress_level >= 70:
+        explanation.append("Stress level is high, which reduces tolerance for aggressive strategies even if the score is acceptable.")
+    elif stress_level <= 30:
+        explanation.append("Stress level is low, which supports better tolerance for training progression.")
+    else:
+        explanation.append("Stress level is moderate, so the model avoids overly aggressive predictions.")
+
     if current_score >= baseline_score:
         explanation.append("Your current score is at or above recent baseline, so the model allows modest progression.")
     else:
         explanation.append("Your current score is below recent baseline, so the model discounts aggressive strategies.")
 
-    strategy_explanations = {
-        "exercise": "Light exercise produces a small gain and is suitable when you want low-risk progression.",
-        "interval": "Interval training offers the largest upside, but only when recovery and strain markers are supportive.",
-        "breathing": "Breathing practice mainly helps by reducing stress pressure and improving autonomic balance.",
-        "recovery": "Recovery optimization helps most when strain is elevated or HRV is suppressed.",
+    strategy_titles = {
+        "exercise": "Light exercise",
+        "interval": "Interval training",
+        "breathing": "Breathing practice",
+        "recovery": "Recovery optimization",
     }
-    explanation.append(strategy_explanations[strategy])
+
+    strategy_explanations = {
+        "exercise": {
+            "favorable": "Light exercise is a reasonable choice here because it can improve fitness without adding extreme strain.",
+            "guarded": "Light exercise is still possible, but the gain is limited because recovery and strain markers are not fully supportive.",
+        },
+        "interval": {
+            "favorable": "Interval training is only favored when recovery is strong, stress is controlled, and heart strain is low.",
+            "guarded": "Interval training is penalized here because the current load, stress, or recovery state makes it less safe.",
+        },
+        "breathing": {
+            "favorable": "Breathing practice is favored when lowering stress can unlock better recovery without adding physical load.",
+            "guarded": "Breathing practice remains useful here because it reduces autonomic strain even when hard training is not ideal.",
+        },
+        "recovery": {
+            "favorable": "Recovery optimization is effective here because it improves readiness without adding more workload.",
+            "guarded": "Recovery optimization is strongly favored because current markers suggest you should restore before pushing harder.",
+        },
+    }
+
+    favorable_context = (
+        rmssd >= baseline_rmssd
+        and hr <= baseline_hr + 5
+        and activity_load <= 50
+        and stress_level <= 50
+    )
+    explanation.append(
+        f"Selected strategy: {strategy_titles[strategy]} with activity load {activity_load} and stress level {stress_level}."
+    )
+    explanation.append(
+        strategy_explanations[strategy]["favorable" if favorable_context else "guarded"]
+    )
 
     safety_alerts = []
     if hr > baseline_hr + 20:
@@ -96,6 +152,27 @@ def simulate_strategy(latest_measurement, recent_measurements, strategy, activit
     if len(safety_alerts) >= 2:
         recommendation = "Recovery first"
 
+    if strategy == "interval":
+        if stress_level >= 70 or activity_load >= 70:
+            recommendation = "Recovery first"
+        elif rmssd >= baseline_rmssd and hr <= baseline_hr + 5:
+            recommendation = "Proceed"
+    elif strategy == "breathing":
+        if stress_level >= 50:
+            recommendation = "Proceed"
+    elif strategy == "recovery":
+        if activity_load >= 50 or stress_level >= 50 or hr > baseline_hr + 5:
+            recommendation = "Proceed"
+    elif strategy == "exercise":
+        if activity_load >= 70 or stress_level >= 70:
+            recommendation = "Use caution"
+
+    context_summary = (
+        f"Current context: {load_band} activity load, {stress_band} stress, "
+        f"HR {round(hr, 2)} vs baseline {round(baseline_hr, 2)}, "
+        f"RMSSD {round(rmssd, 2)} vs baseline {round(baseline_rmssd, 2)}."
+    )
+
     return {
         "strategy": strategy,
         "current_score": round(current_score, 2),
@@ -107,6 +184,7 @@ def simulate_strategy(latest_measurement, recent_measurements, strategy, activit
         "activity_load": activity_load,
         "stress_level": stress_level,
         "recommendation": recommendation,
+        "context_summary": context_summary,
         "explanation": explanation,
         "safety_alerts": safety_alerts,
         "trend": [round(current_score, 2), predicted_score],
